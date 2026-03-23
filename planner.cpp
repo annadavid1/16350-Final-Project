@@ -21,14 +21,15 @@ using namespace std;
 
 #define VISX(x) WINDOWSCALE*x + WINDOWX/2
 #define VISY(y) WINDOWY - WINDOWSCALE*y - 50
-#define BALLRADIUS 0.5
+#define BALLRADIUS 0.2
 
 #define BASEX 0.0
 #define BASEY 0.0
 #define LINK1 1.5
 #define LINK2 1.5
 
-#define EFFECTORRADIUS 0.15
+#define EFFECTORRADIUS 0.1
+#define CONTACTRADIUS EFFECTORRADIUS + BALLRADIUS
 
 #define TARGETX 0.0
 #define TARGETY BASEY + LINK1
@@ -293,6 +294,47 @@ static pair<bool, BallState> isGoalConfig(AngleState angles, BallState ballStart
     return isGoalConfig(anglesToEffector(angles), ballStart);
 }
 
+static pair<bool, BallState> isGoalConfig2(AngleState angles, BallState ballStart, AngleState& anglesp) {
+    double T_MAX = 1, DT = 0.1, DA = MAXACC1 / 16, theta1p, theta2p, omega1p, omega2p, dx, dy;
+    EffectorState effectorp;
+    BallState ballt;
+    pair<bool, BallState> isGoal;
+    for (double t = 0; t <= T_MAX; t += DT) {
+        ballt = ball(ballStart, t+angles.t);
+        for (double a1 = -MAXACC1; a1 <= MAXACC1; a1 += DA) {
+            for (double a2 = -MAXACC2; a2 <= MAXACC2; a2 += DA) {
+                // compute state
+                theta1p = angles.theta1 + angles.omega1*t + 0.5*a1*t*t;
+                theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
+                omega1p = angles.omega1 + a1*t;
+                omega2p = angles.omega2 + a2*t;
+                anglesp = {theta1p, theta2p, omega1p, omega2p, t + angles.t};
+
+                isGoal = isGoalConfig(anglesp, ballStart);
+                if (isGoal.first) {
+                    return isGoal;
+                }
+
+                // effectorp = anglesToEffector(anglesp);
+
+                // // constraint 4
+                // dx = effectorp.x - ballt.x;
+                // dy = effectorp.y - ballt.y;
+                // if (dx*dx + dy*dy > CONTACTRADIUS*CONTACTRADIUS) {continue;}
+
+                // // constraint 6
+                // if (effectorp.y + effectorp.vy*effectorp.vy/(2*G) < MINHEIGHT) {continue;}
+
+                // // constraint 5
+                // if (hitsTarget(...)) {
+                //     return true;
+                // }
+            }
+        }
+    }
+    return {false, {0,0,0,0,0}};
+}
+
 // Euclidean distance between 2 angle configs
 static double dist(AngleState start, AngleState end) {
 	double omega1 = start.omega1 - end.omega1;
@@ -460,100 +502,100 @@ Node* nearestToTarget(Tree* t, CatchTarget target) {
 }
 
 static pair<int, Node*> extend(Tree* t, BallState ballStart) {
-    if (sampleBiased(gen)) {
-        CatchTarget target = sampleCatchTarget(ballStart);
-        Node* qmin = nearestToTarget(t, target);
-        if (qmin == nullptr) return {TRAPPED, nullptr};
+    // if (sampleBiased(gen)) {
+    //     CatchTarget target = sampleCatchTarget(ballStart);
+    //     Node* qmin = nearestToTarget(t, target);
+    //     if (qmin == nullptr) return {TRAPPED, nullptr};
 
-        AngleState goal;
-        if (!makeGoalState(qmin->angles, target, goal)) return {TRAPPED, nullptr};
-        if (!canConnect(qmin->angles, goal)) return {TRAPPED, nullptr};
+    //     AngleState goal;
+    //     if (!makeGoalState(qmin->angles, target, goal)) return {TRAPPED, nullptr};
+    //     if (!canConnect(qmin->angles, goal)) return {TRAPPED, nullptr};
 
-        double d = dist(qmin->angles, goal);
-        double scale = EPSILON / d;
+    //     double d = dist(qmin->angles, goal);
+    //     double scale = EPSILON / d;
 
-        AngleState qextAngle;
-        if (scale >= 1.0) {
-            qextAngle = goal;
-        } else {
-            OmegaState qext = {
-                qmin->angles.omega1 + (goal.omega1 - qmin->angles.omega1) * scale,
-                qmin->angles.omega2 + (goal.omega2 - qmin->angles.omega2) * scale,
-                qmin->angles.t + (goal.t - qmin->angles.t) * scale
-            };
-            qextAngle = arm(qmin->angles, qext, qext.t);
+    //     AngleState qextAngle;
+    //     if (scale >= 1.0) {
+    //         qextAngle = goal;
+    //     } else {
+    //         OmegaState qext = {
+    //             qmin->angles.omega1 + (goal.omega1 - qmin->angles.omega1) * scale,
+    //             qmin->angles.omega2 + (goal.omega2 - qmin->angles.omega2) * scale,
+    //             qmin->angles.t + (goal.t - qmin->angles.t) * scale
+    //         };
+    //         qextAngle = arm(qmin->angles, qext, qext.t);
+    //     }
+
+    //     Node* qnew = new Node(qextAngle, qmin);
+    //     AngleState qangles, qcheck;
+    //     qangles = qnew->angles;
+    //     for (int i = 1; i < NUMSAMPLES; i++) {
+    //         qcheck = arm(qmin->angles, qangles, qmin->angles.t 
+    //             + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
+    //         if (isGoalConfig(qcheck, ballStart).first) {
+    //             qnew = new Node(qcheck, qmin);
+    //             t->V.push_back(qnew);
+    //             return {ADVANCED, qnew};
+    //         }
+    //     }
+    //     t->V.push_back(qnew);
+    //     return {REACHED, qnew};
+    //     t->V.push_back(qnew);
+    //     return {scale >= 1.0 ? REACHED : ADVANCED, qnew};
+    // } else {
+    OmegaState qrand = sample(ballStart.t, 
+        ballStart.t + ballStart.vy / G * SAMPLETIME);
+    Node *q, *qnew, *qmin = nullptr;
+    double d;
+    double minDist = DOUBLEMAX;
+    for (int i = 0; i < t->V.size(); i++) {
+        q = t->V[i];
+        d = dist(q->angles, qrand);
+        if (d < minDist && canConnect(q->angles, qrand)) {
+            qmin = q;
+            minDist = d;
         }
-
-        Node* qnew = new Node(qextAngle, qmin);
-        AngleState qangles, qcheck;
-        qangles = qnew->angles;
-        for (int i = 1; i < NUMSAMPLES; i++) {
-            qcheck = arm(qmin->angles, qangles, qmin->angles.t 
-                + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
-            if (isGoalConfig(qcheck, ballStart).first) {
-                qnew = new Node(qcheck, qmin);
-                t->V.push_back(qnew);
-                return {ADVANCED, qnew};
-            }
-        }
+    }
+    if (qmin == nullptr) {
+        return {TRAPPED, nullptr};
+    }
+    double scale = EPSILON / minDist;
+    AngleState qcheck, qangles;
+    if (scale >= 1) {
+        qnew = new Node(arm(qmin->angles, qrand, qrand.t), qmin);
+        // qangles = qnew->angles;
+        // for (int i = 1; i < NUMSAMPLES; i++) {
+        //     qcheck = arm(qmin->angles, qangles, qmin->angles.t 
+        //         + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
+        //     if (isGoalConfig(qcheck, ballStart).first) {
+        //         qnew = new Node(qcheck, qmin);
+        //         t->V.push_back(qnew);
+        //         return {ADVANCED, qnew};
+        //     }
+        // }
         t->V.push_back(qnew);
         return {REACHED, qnew};
-        t->V.push_back(qnew);
-        return {scale >= 1.0 ? REACHED : ADVANCED, qnew};
-    } else {
-        OmegaState qrand = sample(ballStart.t, 
-            ballStart.t + ballStart.vy / G * SAMPLETIME);
-        Node *q, *qnew, *qmin = nullptr;
-        double d;
-        double minDist = DOUBLEMAX;
-        for (int i = 0; i < t->V.size(); i++) {
-            q = t->V[i];
-            d = dist(q->angles, qrand);
-            if (d < minDist && canConnect(q->angles, qrand)) {
-                qmin = q;
-                minDist = d;
-            }
-        }
-        if (qmin == nullptr) {
-            return {TRAPPED, nullptr};
-        }
-        double scale = EPSILON / minDist;
-        AngleState qcheck, qangles;
-        if (scale >= 1) {
-            qnew = new Node(arm(qmin->angles, qrand, qrand.t), qmin);
-            qangles = qnew->angles;
-            for (int i = 1; i < NUMSAMPLES; i++) {
-                qcheck = arm(qmin->angles, qangles, qmin->angles.t 
-                    + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
-                if (isGoalConfig(qcheck, ballStart).first) {
-                    qnew = new Node(qcheck, qmin);
-                    t->V.push_back(qnew);
-                    return {ADVANCED, qnew};
-                }
-            }
-            t->V.push_back(qnew);
-            return {REACHED, qnew};
-        }
-
-        OmegaState qext = {
-            qmin->angles.omega1 + (qrand.omega1 - qmin->angles.omega1) * scale,
-            qmin->angles.omega2 + (qrand.omega2 - qmin->angles.omega2) * scale,
-            qmin->angles.t + (qrand.t - qmin->angles.t) * scale
-        };
-        qnew = new Node(arm(qmin->angles, qext, qext.t), qmin);
-        qangles = qnew->angles;
-        for (int i = 1; i < NUMSAMPLES; i++) {
-            qcheck = arm(qmin->angles, qangles, qmin->angles.t 
-                + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
-            if (isGoalConfig(qcheck, ballStart).first) {
-                qnew = new Node(qcheck, qmin);
-                t->V.push_back(qnew);
-                return {ADVANCED, qnew};
-            }
-        }
-        t->V.push_back(qnew);
-        return {ADVANCED, qnew};
     }
+
+    OmegaState qext = {
+        qmin->angles.omega1 + (qrand.omega1 - qmin->angles.omega1) * scale,
+        qmin->angles.omega2 + (qrand.omega2 - qmin->angles.omega2) * scale,
+        qmin->angles.t + (qrand.t - qmin->angles.t) * scale
+    };
+    qnew = new Node(arm(qmin->angles, qext, qext.t), qmin);
+    qangles = qnew->angles;
+    // for (int i = 1; i < NUMSAMPLES; i++) {
+    //     qcheck = arm(qmin->angles, qangles, qmin->angles.t 
+    //         + (qangles.t - qmin->angles.t) * i / NUMSAMPLES);
+    //     if (isGoalConfig(qcheck, ballStart).first) {
+    //         qnew = new Node(qcheck, qmin);
+    //         t->V.push_back(qnew);
+    //         return {ADVANCED, qnew};
+    //     }
+    // }
+    t->V.push_back(qnew);
+    return {ADVANCED, qnew};
+    // }
 }
 
 // static pair<int, Node*> extend(Tree *t, OmegaState qrand, BallState ballStart) {
@@ -602,6 +644,7 @@ static pair<Node*, BallState> runRRT(
 	vector<double*> path = {};
 	pair<int, Node*> ext;
     pair<bool, BallState> isGoal;
+    AngleState anglesp;
 
 	// initialize start and goal nodes and trees
 	start = new Node(startAngle);
@@ -614,9 +657,10 @@ static pair<Node*, BallState> runRRT(
 		ext = extend(t, ballStart);
 		s = ext.first; qnew = ext.second;
 		if (s != TRAPPED) {
-            isGoal = isGoalConfig(qnew->angles, ballStart);
+            isGoal = isGoalConfig2(qnew->angles, ballStart, anglesp);
             if (isGoal.first) {
                 // reached goal
+                qnew = new Node(anglesp, qnew);
                 return {qnew, isGoal.second};
             }
 		}
