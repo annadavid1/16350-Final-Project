@@ -30,7 +30,6 @@ using namespace sf;
 #define LINK2 1.5
 
 #define EFFECTORRADIUS 0.1
-#define CONTACTRADIUS EFFECTORRADIUS + BALLRADIUS
 
 #define TARGETX 0.0
 #define TARGETY BASEY + LINK1
@@ -51,7 +50,8 @@ using namespace sf;
 
 #define SAMPLETIME 2.25
 
-#define NUMSAMPLES 32
+// how far ahead we can plan (up to 5 times as many plans as have been executed)
+#define PLANAHEAD 5
 
 // extend outputs
 #define TRAPPED 0
@@ -356,6 +356,7 @@ OmegaState sample(double startT, double endT) {
 
 // for RRT, sample random state and extend tree towards it, return new state
 static pair<int, Node*> extend(Tree* t, BallState ballStart) {
+    // sample from ball start to SAMPLETIME * (time to max height) later
     OmegaState qrand = sample(ballStart.t, 
         ballStart.t + ballStart.vy / G * SAMPLETIME);
     Node *q, *qnew, *qmin = nullptr;
@@ -443,6 +444,13 @@ void plannerThread() {
     BallState ballStart = snapshot.ballStart;
     while (1)
     {
+        {
+            lock_guard<mutex> lock(worldLock);
+            snapshot = world;
+        }
+        if (snapshot.planned > snapshot.executed * PLANAHEAD) {
+            this_thread::sleep_for(chrono::milliseconds(1000));
+        }
         plan = runRRT(currAngles, ballStart);
         {
             lock_guard<mutex> lock(queueLock);
