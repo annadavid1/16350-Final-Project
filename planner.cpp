@@ -64,7 +64,6 @@ random_device rd;
 default_random_engine gen(rd());
 uniform_real_distribution<> rand_omega1(-MAXOMEGA1, MAXOMEGA1);
 uniform_real_distribution<> rand_omega2(-MAXOMEGA2, MAXOMEGA2);
-bernoulli_distribution sampleBiased(0.7);
 
 
 struct BallState
