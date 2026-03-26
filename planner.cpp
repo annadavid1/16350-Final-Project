@@ -16,7 +16,7 @@ using namespace sf;
 #define PI M_PI
 #define DOUBLEMAX numeric_limits<double>::max()
 
-#define WINDOWX 1200
+#define WINDOWX 1400
 #define WINDOWY 800
 #define WINDOWSCALE 100
 #define FRAMERATE 60
@@ -29,9 +29,9 @@ using namespace sf;
 
 #define BALLRADIUS 0.2
 
-#define BASEX1 -3.0
+#define BASEX1 -3.5
 #define BASEY1 0.0
-#define BASEX2 3.0
+#define BASEX2 3.5
 #define BASEY2 0.0
 #define LINK1 1.5
 #define LINK2 1.5
@@ -155,10 +155,12 @@ struct Tree {
 WorldState world;
 mutex worldLock;
 
-queue<pair<Node*, BallState>> planQueue1;
+queue<Node*> planQueue1;
 mutex queueLock1;
-queue<pair<Node*, BallState>> planQueue2;
+queue<Node*> planQueue2;
 mutex queueLock2;
+queue<BallState> ballQueue;
+mutex ballLock;
 
 double startTime = SEC(chrono::duration_cast<chrono::milliseconds>(
     chrono::system_clock::now().time_since_epoch()).count());
@@ -469,7 +471,11 @@ void plannerThread() {
         plan1 = runRRT(currAngles1, ballStart);
         {
             lock_guard<mutex> lock(queueLock1);
-            planQueue1.push({plan1.first, plan1.second});
+            planQueue1.push(plan1.first);
+        }
+        {
+            lock_guard<mutex> lock(ballLock);
+            ballQueue.push(plan1.second);
         }
         {
             lock_guard<mutex> lock(worldLock);
@@ -482,7 +488,11 @@ void plannerThread() {
         plan2 = runRRT(currAngles2, ballStart);
         {
             lock_guard<mutex> lock(queueLock2);
-            planQueue2.push({plan2.first, plan2.second});
+            planQueue2.push(plan2.first);
+        }
+        {
+            lock_guard<mutex> lock(ballLock);
+            ballQueue.push(plan2.second);
         }
         {
             lock_guard<mutex> lock(worldLock);
@@ -503,7 +513,7 @@ void executionThread() {
     AngleState angles1, angles2;
     double t0, tf1, tf2;
     stack<AngleState> angleStack1, angleStack2;
-    bool wait1, wait2, updateBall1 = false, updateBall2 = false, update1;
+    bool wait1, wait2, updateBall1 = false, updateBall2 = false, nextBall1 = false, nextBall2 = false;
     while (true) {
         wait1 = false;
         wait2 = false;
@@ -513,8 +523,9 @@ void executionThread() {
             tf2 = world.angleEnd2.t;
             t0 = world.time;
         }
-        // left arm
+
         if (tf1 < tf2) {
+            // left arm
             if (angleStack1.empty()) {
                 // finished this path, pop the next from the queue
                 {
@@ -522,9 +533,9 @@ void executionThread() {
                     if (planQueue1.empty()) {
                         wait1 = true;
                     } else {
-                        out1 = planQueue1.front();
+                        node = planQueue1.front();
                         planQueue1.pop();
-                        node = out1.first;
+                        // node = out1.first;
                         while (node->bp != nullptr) {
                             angleStack1.push(node->angles);
                             prev = node;
@@ -553,12 +564,18 @@ void executionThread() {
                 if (!wait1) {
                     world.angleEnd1 = angles1;
                 }
-                world.ballStart = world.ballNext;
-                world.executed = world.executedNext;
+                if (nextBall1) {
+                    world.ballStart = world.ballNext;
+                    world.executed = world.executedNext;
+                    nextBall1 = false;
+                }
+                lock_guard<mutex> lock1(ballLock);
                 if (updateBall1 && angleStack1.empty()) {
                     world.executedNext += 1;
-                    world.ballNext = out1.second;
+                    world.ballNext = ballQueue.front();
+                    ballQueue.pop();
                     updateBall1 = false;
+                    nextBall1 = true;
                 }
             }
         } else {
@@ -570,9 +587,9 @@ void executionThread() {
                     if (planQueue2.empty()) {
                         wait2 = true;
                     } else {
-                        out2 = planQueue2.front();
+                        node = planQueue2.front();
                         planQueue2.pop();
-                        node = out2.first;
+                        // node = out2.first;
                         while (node->bp != nullptr) {
                             angleStack2.push(node->angles);
                             prev = node;
@@ -601,12 +618,18 @@ void executionThread() {
                 if (!wait2) {
                     world.angleEnd2 = angles2;
                 }
-                world.ballStart = world.ballNext;
-                world.executed = world.executedNext;
+                if (nextBall2) {
+                    world.ballStart = world.ballNext;
+                    world.executed = world.executedNext;
+                    nextBall2 = false;
+                }
+                lock_guard<mutex> lock1(ballLock);
                 if (updateBall2 && angleStack2.empty()) {
                     world.executedNext += 1;
-                    world.ballNext = out2.second;
+                    world.ballNext = ballQueue.front();
+                    ballQueue.pop();
                     updateBall2 = false;
+                    nextBall2 = true;
                 }
             }
         }
