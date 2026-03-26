@@ -46,10 +46,10 @@ using namespace sf;
 #define TARGETRADIUS (LINK2 * 3.0 / 4.0)
 #define MINHEIGHT BASEY1 + LINK1 + LINK2 * 2.2
 
-#define MAXOMEGA1 1.25*PI//2*PI
-#define MAXOMEGA2 1.25*PI//2*PI
-#define MAXACC1 2.5*PI//4*PI
-#define MAXACC2 2.5*PI//4*PI
+#define MAXOMEGA1 1.25*PI
+#define MAXOMEGA2 1.25*PI
+#define MAXACC1 2.5*PI
+#define MAXACC2 2.5*PI
 #define TIMEWEIGHT 0.25
 
 #define T_MAX 1
@@ -189,7 +189,8 @@ static AngleState arm(AngleState start, AngleState end, double t) {
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
     double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
-    return {start.basex, start.basey, start.targetx, start.targety, theta1, theta2, omega1, omega2, t};
+    return {start.basex, start.basey, start.targetx, start.targety, 
+            theta1, theta2, omega1, omega2, t};
 }
 
 // get position of arm at time t moving from start to end
@@ -205,7 +206,8 @@ static AngleState arm(AngleState start, OmegaState end, double t) {
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
     double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
-    return {start.basex, start.basey, start.targetx, start.targety, theta1, theta2, omega1, omega2, t};
+    return {start.basex, start.basey, start.targetx, start.targety, theta1, 
+            theta2, omega1, omega2, t};
 }
 
 // get end effector state from angle state
@@ -237,8 +239,6 @@ static pair<bool, BallState> isGoalConfig(
     double ts[3];
     xdist = currBall.x - effector.x;
     ydist = currBall.y - BALLRADIUS - effector.y;
-    // dist = xdist * xdist + ydist * ydist;
-    // maxDist = EFFECTORRADIUS + BALLRADIUS;
     if (abs(xdist) > EFFECTORWIDTH || abs(ydist) > EFFECTORHEIGHT) {
         return {false, {0,0,0,0,0}};
     }
@@ -284,7 +284,8 @@ static pair<bool, BallState> isGoalConfig(
         xdist = x0+vx*t;
         ydist = y0+vy*t-G*t*t/2;
         if (xdist*xdist + ydist*ydist <= TARGETRADIUS*TARGETRADIUS) {
-            return {true, {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
+            return {true, 
+                    {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
         }
         return {false, {0,0,0,0,0}};
     }
@@ -303,7 +304,8 @@ static pair<bool, BallState> isGoalConfig(
         }
         res = a*t*t*t*t + b*t*t*t + c*t*t + d*t + e;
         if (res <= 0) {
-            return {true, {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
+            return {true, 
+                    {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
         }
     }
     return {false, {0,0,0,0,0}};
@@ -328,7 +330,9 @@ static pair<bool, BallState> isGoalConfigFrom(
                 theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
                 omega1p = angles.omega1 + a1*t;
                 omega2p = angles.omega2 + a2*t;
-                anglesp = {angles.basex, angles.basey, angles.targetx, angles.targety, theta1p, theta2p, omega1p, omega2p, t + angles.t};
+                anglesp = {angles.basex, angles.basey, angles.targetx, 
+                           angles.targety, theta1p, theta2p, omega1p, omega2p, 
+                           t + angles.t};
 
                 isGoal = isGoalConfig(anglesp, ballStart);
                 if (isGoal.first) {
@@ -344,7 +348,7 @@ static pair<bool, BallState> isGoalConfigFrom(
 static double dist(AngleState start, OmegaState end) {
 	double omega1 = start.omega1 - end.omega1;
     double omega2 = start.omega2 - end.omega2;
-    double t = (start.t - end.t)*TIMEWEIGHT; // scale time down so it doesn't overpower
+    double t = (start.t - end.t)*TIMEWEIGHT; // scale time down so not overpower
 	return sqrt(omega1*omega1 + omega2*omega2 + t*t);
 }
 
@@ -370,7 +374,7 @@ OmegaState sample(double startT, double endT) {
 
 // for RRT, sample random state and extend tree towards it, return new state
 static pair<int, Node*> extend(Tree* t, BallState ballStart, double startTime) {
-    // sample from ball start to SAMPLETIME * (time to max height) later
+    // sample from startTime to SAMPLETIME * (time to max ball height)
     OmegaState qrand = sample(startTime, 
         ballStart.t + ballStart.vy / G * SAMPLETIME);
     Node *q, *qnew, *qmin = nullptr;
@@ -509,11 +513,11 @@ void plannerThread() {
 */
 void executionThread() {
     Node *node, *prev;
-    pair<Node*, BallState> out1, out2;
     AngleState angles1, angles2;
     double t0, tf1, tf2;
     stack<AngleState> angleStack1, angleStack2;
-    bool wait1, wait2, updateBall1 = false, updateBall2 = false, nextBall1 = false, nextBall2 = false;
+    bool wait1, wait2, updateBall1 = false, updateBall2 = false, 
+        nextBall1 = false, nextBall2 = false;
     while (true) {
         wait1 = false;
         wait2 = false;
@@ -535,7 +539,6 @@ void executionThread() {
                     } else {
                         node = planQueue1.front();
                         planQueue1.pop();
-                        // node = out1.first;
                         while (node->bp != nullptr) {
                             angleStack1.push(node->angles);
                             prev = node;
@@ -589,7 +592,6 @@ void executionThread() {
                     } else {
                         node = planQueue2.front();
                         planQueue2.pop();
-                        // node = out2.first;
                         while (node->bp != nullptr) {
                             angleStack2.push(node->angles);
                             prev = node;
@@ -695,7 +697,7 @@ void visualizerThread() {
         }
 
         tnow = SEC(chrono::duration_cast<chrono::milliseconds>(
-            chrono::system_clock::now().time_since_epoch()).count()) - startTime;
+            chrono::system_clock::now().time_since_epoch()).count())-startTime;
         {
             lock_guard<mutex> lock(worldLock);
             world.time = tnow;
@@ -725,7 +727,8 @@ void visualizerThread() {
         window.draw(link21);
         window.draw(baseRect1);
 
-        RectangleShape effector1(Vector2f(VIS(EFFECTORWIDTH), VIS(EFFECTORHEIGHT)));
+        RectangleShape effector1(Vector2f(VIS(EFFECTORWIDTH), 
+            VIS(EFFECTORHEIGHT)));
         effector1.setFillColor(Color::Green);
         effector1.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
         effector1.setPosition(end1);
@@ -752,7 +755,8 @@ void visualizerThread() {
         window.draw(link22);
         window.draw(baseRect2);
 
-        RectangleShape effector2(Vector2f(VIS(EFFECTORWIDTH), VIS(EFFECTORHEIGHT)));
+        RectangleShape effector2(Vector2f(VIS(EFFECTORWIDTH), 
+            VIS(EFFECTORHEIGHT)));
         effector2.setFillColor(Color::Green);
         effector2.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
         effector2.setPosition(end2);
@@ -803,9 +807,9 @@ void visualizerThread() {
 // run planner, execution, and visualizer simultaneously
 int main(int argc, char** argv) {
     cout << "Initializing...\n";
-    world.angleStart1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, 0};
+    world.angleStart1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0,0,0};
     world.angleEnd1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, 2};
-    world.angleStart2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, 0};
+    world.angleStart2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0,0,0};
     world.angleEnd2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, 2};
     EffectorState effector = anglesToEffector(world.angleStart1);
     world.ballStart = {effector.x, effector.y, 0, 10, 2};
