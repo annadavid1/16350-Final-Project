@@ -16,30 +16,41 @@ using namespace sf;
 #define PI M_PI
 #define DOUBLEMAX numeric_limits<double>::max()
 
-#define WINDOWX 800
-#define WINDOWY 600
+#define WINDOWX 1200
+#define WINDOWY 800
 #define WINDOWSCALE 100
+#define FRAMERATE 60
+#define FONTSIZE 18
 
-#define VISX(x) WINDOWSCALE*x + WINDOWX/2
-#define VISY(y) WINDOWY - WINDOWSCALE*y - 100
+#define VIS(x) WINDOWSCALE * x
+#define VISX(x) VIS(x) + WINDOWX/2
+#define VISY(y) WINDOWY - VIS(y) - 100
+#define SEC(x) x / 1000.0
+
 #define BALLRADIUS 0.2
 
-#define BASEX 0.0
-#define BASEY 0.0
+#define BASEX1 -3.0
+#define BASEY1 0.0
+#define BASEX2 3.0
+#define BASEY2 0.0
 #define LINK1 1.5
 #define LINK2 1.5
 
-#define EFFECTORRADIUS 0.1
+#define EFFECTORWIDTH 0.25
+#define EFFECTORHEIGHT 0.04
 
-#define TARGETX 0.0
-#define TARGETY BASEY + LINK1
+#define TARGETX1 BASEX2
+#define TARGETY1 BASEY2 + LINK1
+#define TARGETX2 BASEX1
+#define TARGETY2 BASEY1 + LINK1
 #define TARGETRADIUS (LINK2 * 3.0 / 4.0)
-#define MINHEIGHT BASEY + LINK1 + LINK2 * 2
+#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 2.2
 
-#define MAXOMEGA1 PI//2*PI
-#define MAXOMEGA2 PI//2*PI
-#define MAXACC1 2*PI//4*PI
-#define MAXACC2 2*PI//4*PI
+#define MAXOMEGA1 1.25*PI//2*PI
+#define MAXOMEGA2 1.25*PI//2*PI
+#define MAXACC1 2.5*PI//4*PI
+#define MAXACC2 2.5*PI//4*PI
+#define TIMEWEIGHT 0.25
 
 #define T_MAX 1
 #define DT 0.1
@@ -48,10 +59,10 @@ using namespace sf;
 // epsilon for extend in RRT
 #define EPSILON PI/8.0
 
-#define SAMPLETIME 2.25
+#define SAMPLETIME 6
 
-// how far ahead we can plan (up to 5 times as many plans as have been executed)
-#define PLANAHEAD 5
+// how far ahead we can plan (up to 50 plans ahead)
+#define PLANAHEAD 50
 
 // extend outputs
 #define TRAPPED 0
@@ -75,13 +86,6 @@ struct BallState
     double t;
 };
 
-struct CatchTarget
-{
-    double x;
-    double y;
-    double t;
-};
-
 struct OmegaState
 {
     double omega1;
@@ -91,6 +95,10 @@ struct OmegaState
 
 struct AngleState
 {
+    double basex;
+    double basey;
+    double targetx;
+    double targety;
     double theta1;
     double theta2;
     double omega1;
@@ -100,6 +108,8 @@ struct AngleState
 
 struct EffectorState
 {
+    double basex;
+    double basey;
     double xmid;
     double ymid;
     double x;
@@ -111,8 +121,10 @@ struct EffectorState
 
 struct WorldState
 {
-    AngleState angleStart;
-    AngleState angleEnd;
+    AngleState angleStart1;
+    AngleState angleEnd1;
+    AngleState angleStart2;
+    AngleState angleEnd2;
     EffectorState effector;
     BallState ballStart;
     BallState ballNext;
@@ -143,11 +155,13 @@ struct Tree {
 WorldState world;
 mutex worldLock;
 
-queue<pair<Node*, BallState>> planQueue;
-mutex queueLock;
+queue<pair<Node*, BallState>> planQueue1;
+mutex queueLock1;
+queue<pair<Node*, BallState>> planQueue2;
+mutex queueLock2;
 
-double startTime = chrono::duration_cast<chrono::milliseconds>(
-    chrono::system_clock::now().time_since_epoch()).count() / 1000.0;
+double startTime = SEC(chrono::duration_cast<chrono::milliseconds>(
+    chrono::system_clock::now().time_since_epoch()).count());
 
 
 // get position of ball at time t that started at start
@@ -173,7 +187,7 @@ static AngleState arm(AngleState start, AngleState end, double t) {
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
     double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
-    return {theta1, theta2, omega1, omega2, t};
+    return {start.basex, start.basey, start.targetx, start.targety, theta1, theta2, omega1, omega2, t};
 }
 
 // get position of arm at time t moving from start to end
@@ -189,20 +203,20 @@ static AngleState arm(AngleState start, OmegaState end, double t) {
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
     double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
-    return {theta1, theta2, omega1, omega2, t};
+    return {start.basex, start.basey, start.targetx, start.targety, theta1, theta2, omega1, omega2, t};
 }
 
 // get end effector state from angle state
 static EffectorState anglesToEffector(AngleState angles) {
-    double xmid = LINK1 * cos(angles.theta1);
+    double xmid = angles.basex + LINK1 * cos(angles.theta1);
     double x = xmid + LINK2 * cos(angles.theta1+angles.theta2);
-    double ymid = LINK1 * sin(angles.theta1);
+    double ymid = angles.basey + LINK1 * sin(angles.theta1);
     double y = ymid + LINK2 * sin(angles.theta1+angles.theta2);
     double vx = -LINK1 * sin(angles.theta1) * angles.omega1 - LINK2 
         * sin(angles.theta1 + angles.theta2) * (angles.omega1 + angles.omega2);
     double vy = LINK1 * cos(angles.theta1) * angles.omega1 + LINK2 
         * cos(angles.theta1 + angles.theta2) * (angles.omega1 + angles.omega2);
-    return {xmid, ymid, x, y, vx, vy, angles.t};
+    return {angles.basex, angles.basey, xmid, ymid, x, y, vx, vy, angles.t};
 }
 
 // checks if effector will catch ball and throw will put ball back within target
@@ -220,19 +234,19 @@ static pair<bool, BallState> isGoalConfig(
         p, q, u, v, r, phi, m, minT, maxDist, res;
     double ts[3];
     xdist = currBall.x - effector.x;
-    ydist = currBall.y - effector.y;
-    dist = xdist * xdist + ydist * ydist;
-    maxDist = EFFECTORRADIUS + BALLRADIUS;
-    if (dist > maxDist * maxDist) {
+    ydist = currBall.y - BALLRADIUS - effector.y;
+    // dist = xdist * xdist + ydist * ydist;
+    // maxDist = EFFECTORRADIUS + BALLRADIUS;
+    if (abs(xdist) > EFFECTORWIDTH || abs(ydist) > EFFECTORHEIGHT) {
         return {false, {0,0,0,0,0}};
     }
-    x0 = currBall.x - TARGETX;
-    y0 = currBall.y - TARGETY;
+    x0 = currBall.x - angles.targetx;
+    y0 = currBall.y - angles.targety;
     vx = effector.vx;
     vy = effector.vy;
     t0 = effector.t;
 
-    if (y0 + vy*vy/(2*G) < MINHEIGHT - TARGETY) {
+    if (y0 + vy*vy/(2*G) < MINHEIGHT - angles.targety) {
         return {false, {0,0,0,0,0}};
     }
     minT = vy / G;
@@ -268,7 +282,7 @@ static pair<bool, BallState> isGoalConfig(
         xdist = x0+vx*t;
         ydist = y0+vy*t-G*t*t/2;
         if (xdist*xdist + ydist*ydist <= TARGETRADIUS*TARGETRADIUS) {
-            return {true, {x0 + TARGETX, y0 + TARGETY, vx, vy, t0}};
+            return {true, {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
         }
         return {false, {0,0,0,0,0}};
     }
@@ -287,7 +301,7 @@ static pair<bool, BallState> isGoalConfig(
         }
         res = a*t*t*t*t + b*t*t*t + c*t*t + d*t + e;
         if (res <= 0) {
-            return {true, {x0 + TARGETX, y0 + TARGETY, vx, vy, t0}};
+            return {true, {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
         }
     }
     return {false, {0,0,0,0,0}};
@@ -300,7 +314,6 @@ static pair<bool, BallState> isGoalConfigFrom(
     AngleState& anglesp
 ) {
     double theta1p, theta2p, omega1p, omega2p, dx, dy, t, a1, a2;
-    EffectorState effectorp;
     BallState ballt;
     pair<bool, BallState> isGoal;
     for (t = 0; t <= T_MAX; t += DT) {
@@ -313,7 +326,7 @@ static pair<bool, BallState> isGoalConfigFrom(
                 theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
                 omega1p = angles.omega1 + a1*t;
                 omega2p = angles.omega2 + a2*t;
-                anglesp = {theta1p, theta2p, omega1p, omega2p, t + angles.t};
+                anglesp = {angles.basex, angles.basey, angles.targetx, angles.targety, theta1p, theta2p, omega1p, omega2p, t + angles.t};
 
                 isGoal = isGoalConfig(anglesp, ballStart);
                 if (isGoal.first) {
@@ -329,7 +342,7 @@ static pair<bool, BallState> isGoalConfigFrom(
 static double dist(AngleState start, OmegaState end) {
 	double omega1 = start.omega1 - end.omega1;
     double omega2 = start.omega2 - end.omega2;
-    double t = (start.t - end.t)/4; // scale time down so it doesn't overpower
+    double t = (start.t - end.t)*TIMEWEIGHT; // scale time down so it doesn't overpower
 	return sqrt(omega1*omega1 + omega2*omega2 + t*t);
 }
 
@@ -354,13 +367,12 @@ OmegaState sample(double startT, double endT) {
 }
 
 // for RRT, sample random state and extend tree towards it, return new state
-static pair<int, Node*> extend(Tree* t, BallState ballStart) {
+static pair<int, Node*> extend(Tree* t, BallState ballStart, double startTime) {
     // sample from ball start to SAMPLETIME * (time to max height) later
-    OmegaState qrand = sample(ballStart.t, 
+    OmegaState qrand = sample(startTime, 
         ballStart.t + ballStart.vy / G * SAMPLETIME);
     Node *q, *qnew, *qmin = nullptr;
     double d, scale, minDist = DOUBLEMAX;
-    AngleState qcheck;
     OmegaState qext;
     for (int i = 0; i < t->V.size(); i++) {
         q = t->V[i];
@@ -412,7 +424,7 @@ static pair<Node*, BallState> runRRT(
 	// main loop, goes until any path found
 	while (1) {
 		// get random config and extend t towards it
-		ext = extend(t, ballStart);
+		ext = extend(t, ballStart, startAngle.t);
 		s = ext.first; qnew = ext.second;
 		if (s != TRAPPED) {
             // checks if can create a goal config after this state
@@ -433,13 +445,14 @@ static pair<Node*, BallState> runRRT(
 * next goal during execution
 */
 void plannerThread() {
-    pair<Node*, BallState> plan;
+    pair<Node*, BallState> plan1, plan2;
     WorldState snapshot;
     {
         lock_guard<mutex> lock(worldLock);
         snapshot = world;
     }
-    AngleState currAngles = snapshot.angleEnd;
+    AngleState currAngles1 = snapshot.angleEnd1;
+    AngleState currAngles2 = snapshot.angleEnd2;
     BallState ballStart = snapshot.ballStart;
     while (1)
     {
@@ -447,20 +460,36 @@ void plannerThread() {
             lock_guard<mutex> lock(worldLock);
             snapshot = world;
         }
-        if (snapshot.planned > snapshot.executed * PLANAHEAD) {
+        if (snapshot.planned >= snapshot.executed + PLANAHEAD) {
             this_thread::sleep_for(chrono::milliseconds(1000));
+            continue;
         }
-        plan = runRRT(currAngles, ballStart);
+
+        // left arm
+        plan1 = runRRT(currAngles1, ballStart);
         {
-            lock_guard<mutex> lock(queueLock);
-            planQueue.push({plan.first, plan.second});
+            lock_guard<mutex> lock(queueLock1);
+            planQueue1.push({plan1.first, plan1.second});
         }
         {
             lock_guard<mutex> lock(worldLock);
             world.planned += 1;
         }
-        currAngles = plan.first->angles;
-        ballStart = plan.second;
+        currAngles1 = plan1.first->angles;
+        ballStart = plan1.second;
+
+        // right arm
+        plan2 = runRRT(currAngles2, ballStart);
+        {
+            lock_guard<mutex> lock(queueLock2);
+            planQueue2.push({plan2.first, plan2.second});
+        }
+        {
+            lock_guard<mutex> lock(worldLock);
+            world.planned += 1;
+        }
+        currAngles2 = plan2.first->angles;
+        ballStart = plan2.second;
     }
 }
 
@@ -469,55 +498,116 @@ void plannerThread() {
 * adds the slowdown at the end of the plan
 */
 void executionThread() {
-    Node *node;
-    pair<Node*, BallState> out;
-    AngleState angles;
-    double t0, tf;
-    stack<AngleState> angleStack;
-    bool wait, updateBall = false;
+    Node *node, *prev;
+    pair<Node*, BallState> out1, out2;
+    AngleState angles1, angles2;
+    double t0, tf1, tf2;
+    stack<AngleState> angleStack1, angleStack2;
+    bool wait1, wait2, updateBall1 = false, updateBall2 = false, update1;
     while (true) {
-        wait = false;
-        if (angleStack.empty()) {
-            // finished this path, pop the next from the queue
-            {
-                lock_guard<mutex> lock(queueLock);
-                if (planQueue.empty()) {
-                    wait = true;
-                } else {
-                    out = planQueue.front();
-                    planQueue.pop();
-                    node = out.first;
-                    while (node->bp != nullptr) {
-                        angleStack.push(node->angles);
-                        node = node->bp;
-                    }
-                    angleStack.push(node->angles);
-                    updateBall = true;
-                }
-            }
-        }
-        if (!wait) {
-            angles = angleStack.top();
-            angleStack.pop();
-        }
+        wait1 = false;
+        wait2 = false;
         {
             lock_guard<mutex> lock(worldLock);
-            tf = world.angleEnd.t;
+            tf1 = world.angleEnd1.t;
+            tf2 = world.angleEnd2.t;
             t0 = world.time;
         }
-        this_thread::sleep_for(chrono::milliseconds(int((tf - t0)*1000)));
-        {
-            lock_guard<mutex> lock(worldLock);
-            world.angleStart = world.angleEnd;
-            if (!wait) {
-                world.angleEnd = angles;
+        // left arm
+        if (tf1 < tf2) {
+            if (angleStack1.empty()) {
+                // finished this path, pop the next from the queue
+                {
+                    lock_guard<mutex> lock(queueLock1);
+                    if (planQueue1.empty()) {
+                        wait1 = true;
+                    } else {
+                        out1 = planQueue1.front();
+                        planQueue1.pop();
+                        node = out1.first;
+                        while (node->bp != nullptr) {
+                            angleStack1.push(node->angles);
+                            prev = node;
+                            node = node->bp;
+                            free(prev);
+                        }
+                        angleStack1.push(node->angles);
+                        free(node);
+                        updateBall1 = true;
+                    }
+                }
             }
-            world.ballStart = world.ballNext;
-            world.executed = world.executedNext;
-            if (updateBall && angleStack.empty()) {
-                world.executedNext += 1;
-                world.ballNext = out.second;
-                updateBall = false;
+            if (!wait1) {
+                angles1 = angleStack1.top();
+                angleStack1.pop();
+            }
+            {
+                lock_guard<mutex> lock(worldLock);
+                tf1 = world.angleEnd1.t;
+                t0 = world.time;
+            }
+            this_thread::sleep_for(chrono::milliseconds(int((tf1 - t0)*1000)));
+            {
+                lock_guard<mutex> lock(worldLock);
+                world.angleStart1 = world.angleEnd1;
+                if (!wait1) {
+                    world.angleEnd1 = angles1;
+                }
+                world.ballStart = world.ballNext;
+                world.executed = world.executedNext;
+                if (updateBall1 && angleStack1.empty()) {
+                    world.executedNext += 1;
+                    world.ballNext = out1.second;
+                    updateBall1 = false;
+                }
+            }
+        } else {
+            // right arm
+            if (angleStack2.empty()) {
+                // finished this path, pop the next from the queue
+                {
+                    lock_guard<mutex> lock(queueLock2);
+                    if (planQueue2.empty()) {
+                        wait2 = true;
+                    } else {
+                        out2 = planQueue2.front();
+                        planQueue2.pop();
+                        node = out2.first;
+                        while (node->bp != nullptr) {
+                            angleStack2.push(node->angles);
+                            prev = node;
+                            node = node->bp;
+                            free(prev);
+                        }
+                        angleStack2.push(node->angles);
+                        free(node);
+                        updateBall2 = true;
+                    }
+                }
+            }
+            if (!wait2) {
+                angles2 = angleStack2.top();
+                angleStack2.pop();
+            }
+            {
+                lock_guard<mutex> lock(worldLock);
+                tf2 = world.angleEnd2.t;
+                t0 = world.time;
+            }
+            this_thread::sleep_for(chrono::milliseconds(int((tf2 - t0)*1000)));
+            {
+                lock_guard<mutex> lock(worldLock);
+                world.angleStart2 = world.angleEnd2;
+                if (!wait2) {
+                    world.angleEnd2 = angles2;
+                }
+                world.ballStart = world.ballNext;
+                world.executed = world.executedNext;
+                if (updateBall2 && angleStack2.empty()) {
+                    world.executedNext += 1;
+                    world.ballNext = out2.second;
+                    updateBall2 = false;
+                }
             }
         }
     }
@@ -548,27 +638,31 @@ void visualizerThread() {
     float padding = 10.0f;
     WorldState snapshot;
     Font font;
-    Text executedText, plannedText;
+    Text executedText, plannedText, timeText;
     Event event;
     BallState b;
-    EffectorState effector;
-    FloatRect bounds1, bounds2;
+    EffectorState eff1, eff2;
+    FloatRect bounds1, bounds2, bounds3;
     
     if (!font.loadFromFile("Arial.ttf")) {
         cout << "Could not load font\n";
         return;
     }
 
-    RenderWindow window(VideoMode(800, 600), "Arm Visualizer");
-    window.setFramerateLimit(60);
+    RenderWindow window(VideoMode(WINDOWX, WINDOWY), "Arm Visualizer");
+    window.setFramerateLimit(FRAMERATE);
 
     executedText.setFont(font);
-    executedText.setCharacterSize(18);
+    executedText.setCharacterSize(FONTSIZE);
     executedText.setFillColor(Color::White);
 
     plannedText.setFont(font);
-    plannedText.setCharacterSize(18);
+    plannedText.setCharacterSize(FONTSIZE);
     plannedText.setFillColor(Color::White);
+
+    timeText.setFont(font);
+    timeText.setCharacterSize(FONTSIZE);
+    timeText.setFillColor(Color::White);
 
     while (window.isOpen()) {
         while (window.pollEvent(event)) {
@@ -577,9 +671,8 @@ void visualizerThread() {
             }
         }
 
-        tnow = chrono::duration_cast<chrono::milliseconds>(
-            chrono::system_clock::now().time_since_epoch()).count() 
-            / 1000.0 - startTime;
+        tnow = SEC(chrono::duration_cast<chrono::milliseconds>(
+            chrono::system_clock::now().time_since_epoch()).count()) - startTime;
         {
             lock_guard<mutex> lock(worldLock);
             world.time = tnow;
@@ -587,44 +680,76 @@ void visualizerThread() {
         }
         b = ball(snapshot.ballStart, snapshot.time);
 
-        effector = anglesToEffector(
-            arm(snapshot.angleStart, snapshot.angleEnd, snapshot.time));
+        // left arm
+        eff1 = anglesToEffector(
+            arm(snapshot.angleStart1, snapshot.angleEnd1, snapshot.time));
 
-        Vector2f base(VISX(BASEX), VISY(BASEY));
-        Vector2f joint(VISX(effector.xmid), VISY(effector.ymid));
-        Vector2f end(VISX(effector.x), VISY(effector.y));
+        Vector2f base1(VISX(BASEX1), VISY(BASEY1));
+        Vector2f joint1(VISX(eff1.xmid), VISY(eff1.ymid));
+        Vector2f end1(VISX(eff1.x), VISY(eff1.y));
 
         window.clear(Color::Black);
 
-        RectangleShape baseRect(Vector2f(50.0, 4.0f));
-        baseRect.setFillColor(Color::Blue);
-        baseRect.setOrigin(25.0f, 2.0f);
-        baseRect.setPosition(base);
+        RectangleShape baseRect1(Vector2f(50.0, 4.0f));
+        baseRect1.setFillColor(Color::Blue);
+        baseRect1.setOrigin(25.0f, 2.0f);
+        baseRect1.setPosition(base1);
 
-        auto link1 = makeLink(base, joint, 4.0f);
-        auto link2 = makeLink(joint, end, 4.0f);
+        auto link11 = makeLink(base1, joint1, 4.0f);
+        auto link21 = makeLink(joint1, end1, 4.0f);
         
-        window.draw(link1);
-        window.draw(link2);
-        window.draw(baseRect);
+        window.draw(link11);
+        window.draw(link21);
+        window.draw(baseRect1);
 
-        effectorSize = EFFECTORRADIUS * WINDOWSCALE;
-        CircleShape efffector(effectorSize);
-        efffector.setFillColor(Color::Green);
-        efffector.setOrigin(effectorSize, effectorSize);
-        efffector.setPosition(end.x, end.y);
-        window.draw(efffector);
+        RectangleShape effector1(Vector2f(VIS(EFFECTORWIDTH), VIS(EFFECTORHEIGHT)));
+        effector1.setFillColor(Color::Green);
+        effector1.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
+        effector1.setPosition(end1);
 
-        CircleShape circle(BALLRADIUS*WINDOWSCALE);
+        window.draw(effector1);
+
+        // right arm
+        eff2 = anglesToEffector(
+            arm(snapshot.angleStart2, snapshot.angleEnd2, snapshot.time));
+
+        Vector2f base2(VISX(BASEX2), VISY(BASEY2));
+        Vector2f joint2(VISX(eff2.xmid), VISY(eff2.ymid));
+        Vector2f end2(VISX(eff2.x), VISY(eff2.y));
+
+        RectangleShape baseRect2(Vector2f(50.0, 4.0f));
+        baseRect2.setFillColor(Color::Blue);
+        baseRect2.setOrigin(25.0f, 2.0f);
+        baseRect2.setPosition(base2);
+
+        auto link12 = makeLink(base2, joint2, 4.0f);
+        auto link22 = makeLink(joint2, end2, 4.0f);
+        
+        window.draw(link12);
+        window.draw(link22);
+        window.draw(baseRect2);
+
+        RectangleShape effector2(Vector2f(VIS(EFFECTORWIDTH), VIS(EFFECTORHEIGHT)));
+        effector2.setFillColor(Color::Green);
+        effector2.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
+        effector2.setPosition(end2);
+
+        window.draw(effector2);
+
+        // ball
+        CircleShape circle(VIS(BALLRADIUS));
         circle.setFillColor(Color::Red);
-        circle.setOrigin(BALLRADIUS*WINDOWSCALE, BALLRADIUS*WINDOWSCALE);
+        circle.setOrigin(VIS(BALLRADIUS), VIS(BALLRADIUS));
         circle.setPosition(VISX(b.x), VISY(b.y));
         window.draw(circle);
 
+        // text
         executedText.setString("Executed Catches: " 
             + to_string(snapshot.executed));
         plannedText.setString("Planned Catches: " 
             + to_string(snapshot.planned));
+        timeText.setString("Time (s): " 
+            + to_string((int)(snapshot.time)));
 
         bounds1 = executedText.getLocalBounds();
         executedText.setPosition(
@@ -635,11 +760,18 @@ void visualizerThread() {
         bounds2 = plannedText.getLocalBounds();
         plannedText.setPosition(
             window.getSize().x - bounds2.width - padding,
-            padding + bounds1.height + 5
+            padding + bounds1.height + 10
+        );
+
+        bounds3 = timeText.getLocalBounds();
+        timeText.setPosition(
+            window.getSize().x - bounds3.width - padding,
+            padding + bounds2.height + bounds1.height + 20
         );
 
         window.draw(executedText);
         window.draw(plannedText);
+        window.draw(timeText);
 
         window.display();
     }
@@ -648,10 +780,12 @@ void visualizerThread() {
 // run planner, execution, and visualizer simultaneously
 int main(int argc, char** argv) {
     cout << "Initializing...\n";
-    world.angleStart = {PI/4, PI/2, 0, 0, 0};
-    world.angleEnd = {PI/4, PI/2, 0, 0, 2};
-    world.effector = anglesToEffector(world.angleStart);
-    world.ballStart = {world.effector.x, world.effector.y, 0, 10, 2};
+    world.angleStart1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, 0};
+    world.angleEnd1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, 2};
+    world.angleStart2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, 0};
+    world.angleEnd2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, 2};
+    EffectorState effector = anglesToEffector(world.angleStart1);
+    world.ballStart = {effector.x, effector.y, 0, 10, 2};
     world.ballNext = world.ballStart;
     world.time = 0.0;
     thread execution(executionThread);
