@@ -59,7 +59,8 @@ using namespace sf;
 // epsilon for extend in RRT
 #define EPSILON PI/8.0
 
-#define SAMPLETIME 6
+#define SAMPLETIME 2.5
+#define FIRSTTHROW 3
 
 // how far ahead we can plan (up to 50 plans ahead)
 #define PLANAHEAD 50
@@ -808,16 +809,16 @@ void visualizerThread() {
 int main(int argc, char** argv) {
     cout << "Initializing...\n";
     world.angleStart1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0,0,0};
-    world.angleEnd1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, 2};
+    world.angleEnd1 = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, FIRSTTHROW};
     world.angleStart2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0,0,0};
-    world.angleEnd2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, 2};
+    world.angleEnd2 = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, FIRSTTHROW};
     EffectorState effector = anglesToEffector(world.angleStart1);
-    world.ballStart = {effector.x, effector.y, 0, 10, 2};
+    world.ballStart = {effector.x, effector.y, 0, 10, FIRSTTHROW};
     world.ballNext = world.ballStart;
     world.time = 0.0;
     thread execution(executionThread);
     thread planner(plannerThread);
-    cout << "Intial throw in 2 seconds\n";
+    cout << "Intial throw in " << FIRSTTHROW << " seconds\n";
     visualizerThread(); // run in main thread
 
     execution.join();
