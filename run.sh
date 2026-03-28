@@ -4,4 +4,4 @@ g++ planner.cpp -o planner.out \
 -lsfml-graphics -lsfml-window -lsfml-system \
 -pthread
 
-./planner.out
+./planner.out $1
