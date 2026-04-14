@@ -50,7 +50,6 @@ using namespace sf;
 #define TARGETRADIUS (LINK1 + LINK2 / 2.0)
 #define MINHEIGHT BASEY1 + LINK1 + LINK2 * 3.5
 #define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 4.5
-// #define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 2.8
 
 #define MAXOMEGA1 1.35*PI
 #define MAXOMEGA2 1.35*PI
@@ -170,13 +169,10 @@ WorldState world;
 mutex worldLock;
 
 deque<Node*> planQueue1;
-// mutex queueLock1;
 deque<Node*> planQueue2;
-// mutex queueLock2;
 
 int numBalls;
 deque<BallState>* ballQueue;
-// mutex ballLock;
 mutex queueLock;
 
 Color ballColors[3] = {Color::Red, Color::Magenta, Color::Cyan};
@@ -273,7 +269,6 @@ static pair<bool, BallState> isGoalConfig(
     t0 = effector.t;
 
     if (y0 + vy*vy/(2*G) < MINHEIGHT - angles.targety || y0 + vy*vy/(2*G) > MAXHEIGHT - angles.targety) {
-        // MAXHEIGHT - angles.targety < y0 + vy*vy/(2*G)) {
         return {false, {0,0,0,0,0}};
     }
     minT = vy / G;
@@ -501,9 +496,8 @@ void plannerThread() {
         ballStart[i] = ballWorld[i];
     }
     int ballIndex = 0;
-    // BallState ballStart = snapshot.ballStart[ballIndex];
     int backtrack = 1;
-    int backtrackPlan = 0;
+    int backtrackPlan = -1;
     double elapseMult = 1;
     while (1)
     {
@@ -534,15 +528,11 @@ void plannerThread() {
                 {
                     lock_guard<mutex> lock(worldLock);
                     cout << "backtracking 1 " << backtrack << endl;
-                    if (backtrackPlan == 0) {
+                    if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
                         backtrack = (double)(world.planned - world.executed - 2)/2.0;
-                        // if (backtrack == 0) {
-                        //     cout << "No valid plan\n";
-                        //     exit(0);
-                        // }
                     }
                     cout << "actual backtracking 1 " << backtrack << endl;
                     ballIndex = ballIndex > 0 ? ballIndex-1 : numBalls-1;
@@ -556,23 +546,6 @@ void plannerThread() {
                         }
                     }
                 }
-                // for (int i = 0; i < backtrack; i++) {
-                //     for (int j = 0; j < numBalls; j++) {
-                //         {
-                //             lock_guard<mutex> lock(queueLock2);
-                //             planQueue2.pop_back();
-                //         }
-                //     }
-                // }
-                // for (int i = 0; i < backtrack; i++) {
-                //     for (int j = 0; j < numBalls; j++) {
-                //         {
-                //             lock_guard<mutex> lock(ballLock);
-                //             ballQueue[j].pop_back();
-                //             ballQueue[j].pop_back();
-                //         }
-                //     }
-                // }
                 {
                     lock_guard<mutex> lock(worldLock);
                     world.planned -= backtrack * 2;
@@ -592,7 +565,7 @@ void plannerThread() {
             world.planned += 1;
             cout << "Planned: " << world.planned << endl;
             if (backtrackPlan < world.planned) {
-                backtrackPlan = 0;
+                backtrackPlan = -1;
                 backtrack = 1;
                 elapseMult = 1;
             }
@@ -619,15 +592,11 @@ void plannerThread() {
                 {
                     lock_guard<mutex> lock(worldLock);
                     cout << "backtracking 2 " << backtrack << endl;
-                    if (backtrackPlan == 0) {
+                    if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
                         backtrack = (double)(world.planned - world.executed - 2)/2.0;
-                        // if (backtrack == 0) {
-                        //     cout << "No valid plan\n";
-                        //     exit(0);
-                        // }
                     }
                     cout << "actual backtracking 2 " << backtrack << endl;
                     for (int i = 0; i < backtrack; i++) {
@@ -641,23 +610,6 @@ void plannerThread() {
                         }
                     }
                 }
-                // for (int i = 0; i < backtrack; i++) {
-                //     for (int j = 0; j < numBalls; j++) {
-                //         {
-                //             lock_guard<mutex> lock(queueLock2);
-                //             planQueue2.pop_back();
-                //         }
-                //     }
-                // }
-                // for (int i = 0; i < backtrack; i++) {
-                //     for (int j = 0; j < numBalls; j++) {
-                //         {
-                //             lock_guard<mutex> lock(ballLock);
-                //             ballQueue[j].pop_back();
-                //             ballQueue[j].pop_back();
-                //         }
-                //     }
-                // }
                 {
                     lock_guard<mutex> lock(worldLock);
                     world.planned -= backtrack * 2;
@@ -678,7 +630,7 @@ void plannerThread() {
             world.planned += 1;
             cout << "Planned: " << world.planned << endl;
             if (backtrackPlan < world.planned) {
-                backtrackPlan = 0;
+                backtrackPlan = -1;
                 backtrack = 1;
                 elapseMult = 1;
             }
