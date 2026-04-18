@@ -17,9 +17,9 @@ using namespace sf;
 #define PI M_PI
 #define DOUBLEMAX numeric_limits<double>::max()
 
-#define WINDOWX 1400
+#define WINDOWX 1100
 #define WINDOWY 800
-#define WINDOWSCALE 50
+#define WINDOWSCALE 40
 #define FRAMERATE 60
 #define FONTSIZE 18
 
@@ -47,14 +47,14 @@ using namespace sf;
 #define TARGETY1 BASEY2
 #define TARGETX2 BASEX1
 #define TARGETY2 BASEY1
-#define TARGETRADIUS (LINK1 + LINK2 / 2.0)
-#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 3.5
-#define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 4.5
+#define TARGETRADIUS (LINK1 + 3.0 * LINK2 / 4.0)
+#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 4.5//4.0
+#define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 5.5//5.0
 
-#define MAXOMEGA1 1.35*PI
-#define MAXOMEGA2 1.35*PI
-#define MAXACC1 2.6*PI
-#define MAXACC2 2.6*PI
+#define MAXOMEGA1 2.0*PI//1.75*PI
+#define MAXOMEGA2 2.0*PI//1.75*PI
+#define MAXACC1 3.25*PI//3.0*PI
+#define MAXACC2 3.25*PI//3.0*PI
 #define TIMEWEIGHT 0.25
 
 #define TMAX 1
@@ -67,8 +67,8 @@ using namespace sf;
 #define SAMPLETIME 2.5
 #define FIRSTTHROW 10.0
 
-// how far ahead we can plan (up to 50 plans ahead)
-#define PLANAHEAD 100
+// how far ahead we can plan (up to 200 plans ahead)
+#define PLANAHEAD 200
 #define MAXELAPSE 6.0
 #define ELAPSEMULT 1.25
 
@@ -175,7 +175,7 @@ int numBalls;
 deque<BallState>* ballQueue;
 mutex queueLock;
 
-Color ballColors[3] = {Color::Red, Color::Magenta, Color::Cyan};
+Color ballColors[4] = {Color::Red, Color::Magenta, Color::Cyan, Color::Yellow};
 
 vector<double> times;
 vector<double> accs1;
@@ -535,8 +535,8 @@ void plannerThread() {
                         backtrack = (double)(world.planned - world.executed - 2)/2.0;
                     }
                     cout << "actual backtracking 1 " << backtrack << endl;
-                    ballIndex = ballIndex > 0 ? ballIndex-1 : numBalls-1;
                     for (int i = 0; i < backtrack; i++) {
+                        ballIndex = ballIndex > 0 ? ballIndex-1 : numBalls-1;
                         {
                             lock_guard<mutex> lock(queueLock);
                             planQueue1.pop_back();
@@ -616,7 +616,7 @@ void plannerThread() {
                     cout << "Planned: " << world.planned << endl;
                 }
                 backtrack++;
-                elapseMult *= 1.5;
+                elapseMult *= ELAPSEMULT;
             }
         }
         
@@ -981,20 +981,20 @@ int main(int argc, char** argv) {
     ballQueue = new deque<BallState>[numBalls];
     cout << "Initializing...\n";
     world.angleStart[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0,0,0};
-    world.angleEnd[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, FIRSTTHROW};
+    world.angleEnd[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, FIRSTTHROW+5*(numBalls > 3)};
     world.angleStart[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0,0,0};
-    world.angleEnd[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, FIRSTTHROW};
+    world.angleEnd[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, FIRSTTHROW+5*(numBalls > 3)};
     EffectorState effector = anglesToEffector(world.angleStart[0]);
     world.ballStart = (BallState*)malloc(numBalls * sizeof(BallState));
     world.ballNext = (BallState*)malloc(numBalls * sizeof(BallState));
     for (int i = 0; i < numBalls; i++) {
-        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+i*4.0/numBalls};
+        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+5*(numBalls > 3)+i*6.0/numBalls};
         world.ballNext[i] = world.ballStart[i];
     }
     world.time = 0.0;
     thread execution(executionThread);
     thread planner(plannerThread);
-    cout << "Intial throw in " << FIRSTTHROW << " seconds\n";
+    cout << "Intial throw in " << FIRSTTHROW+5*(numBalls > 3) << " seconds\n";
     visualizerThread(); // run in main thread
 
     execution.join();
