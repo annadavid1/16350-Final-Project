@@ -48,13 +48,13 @@ using namespace sf;
 #define TARGETX2 BASEX1
 #define TARGETY2 BASEY1
 #define TARGETRADIUS (LINK1 + 3.0 * LINK2 / 4.0)
-#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 4.5//4.0
-#define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 5.5//5.0
+#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 4.5
+#define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 5.5
 
-#define MAXOMEGA1 2.0*PI//1.75*PI
-#define MAXOMEGA2 2.0*PI//1.75*PI
-#define MAXACC1 3.25*PI//3.0*PI
-#define MAXACC2 3.25*PI//3.0*PI
+#define MAXOMEGA1 2.0*PI
+#define MAXOMEGA2 2.0*PI
+#define MAXACC1 3.25*PI
+#define MAXACC2 3.25*PI
 #define TIMEWEIGHT 0.25
 
 #define TMAX 1
@@ -527,14 +527,13 @@ void plannerThread() {
             } else {
                 {
                     lock_guard<mutex> lock(worldLock);
-                    cout << "backtracking 1 " << backtrack << endl;
                     if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
                         backtrack = (double)(world.planned - world.executed - 2)/2.0;
                     }
-                    cout << "actual backtracking 1 " << backtrack << endl;
+                    cout << "Backtracking Left: " << backtrack << endl;
                     for (int i = 0; i < backtrack; i++) {
                         ballIndex = ballIndex > 0 ? ballIndex-1 : numBalls-1;
                         {
@@ -591,14 +590,13 @@ void plannerThread() {
             } else {
                 {
                     lock_guard<mutex> lock(worldLock);
-                    cout << "backtracking 2 " << backtrack << endl;
                     if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
                         backtrack = (double)(world.planned - world.executed - 2)/2.0;
                     }
-                    cout << "actual backtracking 2 " << backtrack << endl;
+                    cout << "Backtracking Right: " << backtrack << endl;
                     for (int i = 0; i < backtrack; i++) {
                         {
                             lock_guard<mutex> lock(queueLock);
