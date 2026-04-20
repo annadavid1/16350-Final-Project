@@ -175,7 +175,7 @@ int numBalls;
 deque<BallState>* ballQueue;
 mutex queueLock;
 
-Color ballColors[4] = {Color::Red, Color::Magenta, Color::Cyan, Color::Yellow};
+Color ballColors[5] = {Color::Red, Color::Magenta, Color::Cyan, Color::Yellow, Color::Green};
 
 vector<double> times;
 vector<double> accs1;
@@ -986,7 +986,7 @@ int main(int argc, char** argv) {
     world.ballStart = (BallState*)malloc(numBalls * sizeof(BallState));
     world.ballNext = (BallState*)malloc(numBalls * sizeof(BallState));
     for (int i = 0; i < numBalls; i++) {
-        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+5*(numBalls > 3)+i*6.0/numBalls};
+        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+5*(numBalls > 3)+i*8.0/numBalls};
         world.ballNext[i] = world.ballStart[i];
     }
     world.time = 0.0;
