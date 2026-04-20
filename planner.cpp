@@ -175,7 +175,7 @@ int numBalls;
 deque<BallState>* ballQueue;
 mutex queueLock;
 
-Color ballColors[5] = {Color::Red, Color::Magenta, Color::Cyan, Color::Yellow, Color::Green};
+Color ballColors[5] = {Color::Yellow, Color::Magenta, Color::Cyan, Color::Red, Color::Green};
 
 vector<double> times;
 vector<double> accs1;
