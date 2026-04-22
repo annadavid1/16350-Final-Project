@@ -64,7 +64,7 @@ using namespace sf;
 // epsilon for extend in RRT
 #define EPSILON PI/8.0
 
-#define SAMPLETIME 2.5
+#define SAMPLETIME 2.2
 #define FIRSTTHROW 10.0
 
 // how far ahead we can plan (up to 200 plans ahead)
