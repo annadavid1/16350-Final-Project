@@ -9,6 +9,8 @@
 #include <chrono>
 #include <vector>
 #include <algorithm>
+#include <fstream>
+
 
 using namespace std;
 using namespace sf;
@@ -34,7 +36,7 @@ using namespace sf;
 #define BASEY1 0.0
 #define BASEX2 7.5
 #define BASEY2 0.0
-#define LINK1 3.0
+#define LINK1 4.0
 #define LINK2 3.0
 
 #define BASEWIDTH 0.75
@@ -48,28 +50,28 @@ using namespace sf;
 #define TARGETX2 BASEX1
 #define TARGETY2 BASEY1
 #define TARGETRADIUS (LINK1 + 3.0 * LINK2 / 4.0)
-#define MINHEIGHT BASEY1 + LINK1 + LINK2 * 4.5
-#define MAXHEIGHT BASEY1 + LINK1 + LINK2 * 5.5
+#define MINHEIGHT(n) BASEY1 + LINK1 + LINK2 * (4.5 + max(0, n - 2) * 0.15)
+#define MAXHEIGHT(n) BASEY1 + LINK1 + LINK2 * (5.5 + max(0, n - 2) * 0.15)
 
 #define MAXOMEGA1 2.0*PI
 #define MAXOMEGA2 2.0*PI
-#define MAXACC1 3.25*PI
-#define MAXACC2 3.25*PI
-#define TIMEWEIGHT 0.25
+#define MAXACC1 3.5*PI
+#define MAXACC2 3.5*PI
+#define TIMEWEIGHT 1.0
 
 #define TMAX 1
 #define DT 0.1
 #define DA MAXACC1 / 16
 
 // epsilon for extend in RRT
-#define EPSILON PI/8.0
+#define EPSILON PI/16.0
 
 #define SAMPLETIME 2.2
 #define FIRSTTHROW 10.0
 
 // how far ahead we can plan (up to 200 plans ahead)
 #define PLANAHEAD 200
-#define MAXELAPSE 6.0
+#define MAXELAPSE 4.0
 #define ELAPSEMULT 1.25
 
 // extend outputs
@@ -185,14 +187,17 @@ vector<double> accs2;
 double startTime = SEC(chrono::duration_cast<chrono::milliseconds>(
     chrono::system_clock::now().time_since_epoch()).count());
 
+std::ofstream planfile("plans4_14.csv"); // increased start time for plans4_5
+std::ofstream exfile("executed4_14.csv");
+
 
 // get position of ball at time t that started at start
 static BallState ball(BallState start, double t) {
     double dt = t - start.t;
-    double x = start.x + start.vx * dt;
-    double y = start.y + start.vy * dt - G * dt * dt / 2;
     double vx = start.vx;
     double vy = start.vy - G * dt;
+    double x = start.x + vx * dt;
+    double y = start.y + start.vy * dt - G * dt * dt / 2;
     return {x, y, vx, vy, t};
 }
 
@@ -200,15 +205,15 @@ static BallState ball(BallState start, double t) {
 static AngleState arm(AngleState start, AngleState end, double t) {
     double tf = end.t - start.t;
     double dt = t - start.t;
-    if (dt < 0 || tf <= 0) {
-        return start;
-    }
+    // if (dt < 0 || tf <= 0) {
+    //     return start;
+    // }
     double a1 = (end.omega1 - start.omega1)/tf;
     double omega1 = start.omega1 + a1*dt;
-    double theta1 = start.theta1 + start.omega1*dt + a1*dt*dt/2;
+    double theta1 = start.theta1 + start.omega1*dt + a1*dt*dt*0.5;
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
-    double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
+    double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt*0.5;
     return {start.basex, start.basey, start.targetx, start.targety, 
             theta1, theta2, omega1, omega2, t};
 }
@@ -217,29 +222,35 @@ static AngleState arm(AngleState start, AngleState end, double t) {
 static AngleState arm(AngleState start, OmegaState end, double t) {
     double tf = end.t - start.t;
     double dt = t - start.t;
-    if (dt < 0 || tf <= 0) {
-        return start;
-    }
+    // if (dt < 0 || tf <= 0) {
+    //     return start;
+    // }
     double a1 = (end.omega1 - start.omega1)/tf;
     double omega1 = start.omega1 + a1*dt;
-    double theta1 = start.theta1 + start.omega1*dt + a1*dt*dt/2;
+    double theta1 = start.theta1 + start.omega1*dt + a1*dt*dt*0.5;
     double a2 = (end.omega2 - start.omega2)/tf;
     double omega2 = start.omega2 + a2*dt;
-    double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt/2;
+    double theta2 = start.theta2 + start.omega2*dt + a2*dt*dt*0.5;
     return {start.basex, start.basey, start.targetx, start.targety, theta1, 
             theta2, omega1, omega2, t};
 }
 
 // get end effector state from angle state
 static EffectorState anglesToEffector(AngleState angles) {
-    double xmid = angles.basex + LINK1 * cos(angles.theta1);
-    double x = xmid + LINK2 * cos(angles.theta1+angles.theta2);
-    double ymid = angles.basey + LINK1 * sin(angles.theta1);
-    double y = ymid + LINK2 * sin(angles.theta1+angles.theta2);
-    double vx = -LINK1 * sin(angles.theta1) * angles.omega1 - LINK2 
-        * sin(angles.theta1 + angles.theta2) * (angles.omega1 + angles.omega2);
-    double vy = LINK1 * cos(angles.theta1) * angles.omega1 + LINK2 
-        * cos(angles.theta1 + angles.theta2) * (angles.omega1 + angles.omega2);
+    double theta12 = angles.theta1+angles.theta2;
+    double omega12 = angles.omega1 + angles.omega2;
+    double cos1 = cos(angles.theta1);
+    double sin1 = sin(angles.theta1);
+    double cos2 = cos(theta12);
+    double sin2 = sin(theta12);
+    double xmid = angles.basex + LINK1 * cos1;
+    double x = xmid + LINK2 * cos2;
+    double ymid = angles.basey + LINK1 * sin1;
+    double y = ymid + LINK2 * sin2;
+    double vx = -LINK1 * sin1 * angles.omega1 - LINK2 
+        * sin2 * omega12;
+    double vy = LINK1 * cos1 * angles.omega1 + LINK2 
+        * cos2 * omega12;
     return {angles.basex, angles.basey, xmid, ymid, x, y, vx, vy, angles.t};
 }
 
@@ -253,22 +264,22 @@ static pair<bool, BallState> isGoalConfig(
         return {false, {0,0,0,0,0}};
     }
     BallState currBall = ball(ballStart, effector.t);
-    int i;
     double t, t0, xdist, ydist, dist, x0, y0, vx, vy, a, b, c, d, e, A, B, C, D,
         p, q, u, v, r, phi, m, minT, maxDist, res;
-    double ts[3];
     xdist = currBall.x - effector.x;
     ydist = currBall.y - BALLRADIUS - effector.y;
     if (abs(xdist) > EFFECTORWIDTH || abs(ydist) > EFFECTORHEIGHT) {
         return {false, {0,0,0,0,0}};
     }
+    int i;
+    double ts[3];
     x0 = currBall.x - angles.targetx;
     y0 = currBall.y - angles.targety;
     vx = effector.vx;
     vy = effector.vy;
     t0 = effector.t;
 
-    if (y0 + vy*vy/(2*G) < MINHEIGHT - angles.targety || y0 + vy*vy/(2*G) > MAXHEIGHT - angles.targety) {
+    if (y0 + vy*vy/(2*G) < MINHEIGHT(numBalls) - angles.targety || y0 + vy*vy/(2*G) > MAXHEIGHT(numBalls) - angles.targety) {
         return {false, {0,0,0,0,0}};
     }
     minT = vy / G;
@@ -295,14 +306,14 @@ static pair<bool, BallState> isGoalConfig(
 
     if (D >= 0) {
         // one real root
-        u = cbrt(-q/2.0 + sqrt(D));
-        v = cbrt(-q/2.0 - sqrt(D));
+        u = cbrt(-q*0.5 + sqrt(D));
+        v = cbrt(-q*0.5 - sqrt(D));
         t = u + v - A/3.0;
         if (t < minT) {
             return {false, {0,0,0,0,0}};
         }
         xdist = x0+vx*t;
-        ydist = y0+vy*t-G*t*t/2;
+        ydist = y0+vy*t-G*t*t*0.5;
         if (xdist*xdist + ydist*ydist <= TARGETRADIUS*TARGETRADIUS) {
             return {true, 
                     {x0 + angles.targetx, y0 + angles.targety, vx, vy, t0}};
@@ -340,15 +351,62 @@ static pair<bool, BallState> isGoalConfigFrom(
     double theta1p, theta2p, omega1p, omega2p, dx, dy;
     BallState ballt;
     pair<bool, BallState> isGoal;
-    shuffle(times.begin(), times.end(), gen);
-    shuffle(accs1.begin(), accs1.end(), gen);
-    shuffle(accs2.begin(), accs2.end(), gen);
-    for (double t : times) {
+    // shuffle(times.begin(), times.end(), gen);
+    // shuffle(accs1.begin(), accs1.end(), gen);
+    // shuffle(accs2.begin(), accs2.end(), gen);
+    double t, a1, a2;
+    int i, j, k;
+    for (i = 0; i < times.size(); i+=4) {
+        t = times[i];
         ballt = ball(ballStart, t+angles.t);
-        // bias towards lower magnitude acc by starting at 0
-        for (double a1 : accs1) {
-            // bias towards lower magnitude acc by starting at 0
-            for (double a2 : accs2) {
+        for (j = 0; j < accs1.size(); j+=4) {
+            a1 = accs1[j];
+            for (k = 0; k < accs2.size(); k+=4) {
+                a2 = accs2[k];
+                theta1p = angles.theta1 + angles.omega1*t + 0.5*a1*t*t;
+                theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
+                omega1p = angles.omega1 + a1*t;
+                omega2p = angles.omega2 + a2*t;
+                anglesp = {angles.basex, angles.basey, angles.targetx, 
+                           angles.targety, theta1p, theta2p, omega1p, omega2p, 
+                           t + angles.t};
+
+                isGoal = isGoalConfig(anglesp, ballStart);
+                if (isGoal.first) {
+                    return isGoal;
+                }
+            }
+        }
+    }
+    for (i = 2; i < times.size(); i+=4) {
+        t = times[i];
+        ballt = ball(ballStart, t+angles.t);
+        for (j = 2; j < accs1.size(); j+=4) {
+            a1 = accs1[j];
+            for (k = 2; k < accs2.size(); k+=4) {
+                a2 = accs2[k];
+                theta1p = angles.theta1 + angles.omega1*t + 0.5*a1*t*t;
+                theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
+                omega1p = angles.omega1 + a1*t;
+                omega2p = angles.omega2 + a2*t;
+                anglesp = {angles.basex, angles.basey, angles.targetx, 
+                           angles.targety, theta1p, theta2p, omega1p, omega2p, 
+                           t + angles.t};
+
+                isGoal = isGoalConfig(anglesp, ballStart);
+                if (isGoal.first) {
+                    return isGoal;
+                }
+            }
+        }
+    }
+    for (i = 1; i < times.size(); i+=2) {
+        t = times[i];
+        ballt = ball(ballStart, t+angles.t);
+        for (j = 1; j < accs1.size(); j+=2) {
+            a1 = accs1[j];
+            for (k = 1; k < accs2.size(); k+=2) {
+                a2 = accs2[k];
                 theta1p = angles.theta1 + angles.omega1*t + 0.5*a1*t*t;
                 theta2p = angles.theta2 + angles.omega2*t + 0.5*a2*t*t;
                 omega1p = angles.omega1 + a1*t;
@@ -372,7 +430,7 @@ static double dist(AngleState start, OmegaState end) {
 	double omega1 = start.omega1 - end.omega1;
     double omega2 = start.omega2 - end.omega2;
     double t = (start.t - end.t)*TIMEWEIGHT; // scale time down so not overpower
-	return sqrt(omega1*omega1 + omega2*omega2 + t*t);
+	return omega1*omega1 + omega2*omega2 + t*t;
 }
 
 // check end after start and acceleration less than max
@@ -403,8 +461,9 @@ static pair<int, Node*> extend(Tree* t, BallState ballStart, double startTime) {
     Node *q, *qnew, *qmin = nullptr;
     double d, scale, minDist = DOUBLEMAX;
     OmegaState qext;
-    for (int i = 0; i < t->V.size(); i++) {
-        q = t->V[i];
+    int n = t->V.size();
+    for (int i = 0; i < n; i++) {
+        q = t->V[n-i-1];
         d = dist(q->angles, qrand);
         if (d < minDist && canConnect(q->angles, qrand)) {
             qmin = q;
@@ -484,6 +543,8 @@ static RRTOut runRRT(
 void plannerThread() {
     RRTOut plan1, plan2;
     WorldState snapshot;
+    int planned;
+    double time;
     {
         lock_guard<mutex> lock(worldLock);
         snapshot = world;
@@ -525,15 +586,18 @@ void plannerThread() {
             if (plan1.done) {
                 break;
             } else {
+                shuffle(times.begin(), times.end(), gen);
+                shuffle(accs1.begin(), accs1.end(), gen);
+                shuffle(accs2.begin(), accs2.end(), gen);
                 {
                     lock_guard<mutex> lock(worldLock);
                     if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
-                        backtrack = (double)(world.planned - world.executed - 2)/2.0;
+                        backtrack = (double)(world.planned - world.executed - 2)*0.5;
                     }
-                    cout << "Backtracking Left: " << backtrack << endl;
+                    // cout << "Backtracking Left: " << backtrack << endl;
                     for (int i = 0; i < backtrack; i++) {
                         ballIndex = ballIndex > 0 ? ballIndex-1 : numBalls-1;
                         {
@@ -548,8 +612,11 @@ void plannerThread() {
                 {
                     lock_guard<mutex> lock(worldLock);
                     world.planned -= backtrack * 2;
-                    cout << "Planned: " << world.planned << endl;
+                    planned = world.planned;
+                    time = world.time;
                 }
+                // cout << "Planned: " << planned << endl;
+                planfile << time << ", " << planned << endl;
                 backtrack++;
                 elapseMult *= ELAPSEMULT;
             }
@@ -562,13 +629,16 @@ void plannerThread() {
         {
             lock_guard<mutex> lock(worldLock);
             world.planned += 1;
-            cout << "Planned: " << world.planned << endl;
             if (backtrackPlan < world.planned) {
                 backtrackPlan = -1;
                 backtrack = 1;
                 elapseMult = 1;
             }
+            planned = world.planned;
+            time = world.time;
         }
+        // cout << "Planned: " << planned << ", Time: " << time << endl;
+        planfile << time << ", " << planned << endl;
         currAngles1 = plan1.node->angles;
         ballStart[ballIndex] = plan1.newBall;
 
@@ -588,15 +658,18 @@ void plannerThread() {
             if (plan2.done) {
                 break;
             } else {
+                shuffle(times.begin(), times.end(), gen);
+                shuffle(accs1.begin(), accs1.end(), gen);
+                shuffle(accs2.begin(), accs2.end(), gen);
                 {
                     lock_guard<mutex> lock(worldLock);
                     if (backtrackPlan == -1) {
                         backtrackPlan = world.planned;
                     }
                     if (world.planned - backtrack*2 < world.executed + 2) {
-                        backtrack = (double)(world.planned - world.executed - 2)/2.0;
+                        backtrack = (double)(world.planned - world.executed - 2)*0.5;
                     }
-                    cout << "Backtracking Right: " << backtrack << endl;
+                    // cout << "Backtracking Right: " << backtrack << endl;
                     for (int i = 0; i < backtrack; i++) {
                         {
                             lock_guard<mutex> lock(queueLock);
@@ -611,8 +684,11 @@ void plannerThread() {
                 {
                     lock_guard<mutex> lock(worldLock);
                     world.planned -= backtrack * 2;
-                    cout << "Planned: " << world.planned << endl;
+                    planned = world.planned;
+                    time = world.time;
                 }
+                // cout << "Planned: " << planned << endl;
+                planfile << time << ", " << planned << endl;
                 backtrack++;
                 elapseMult *= ELAPSEMULT;
             }
@@ -626,13 +702,16 @@ void plannerThread() {
         {
             lock_guard<mutex> lock(worldLock);
             world.planned += 1;
-            cout << "Planned: " << world.planned << endl;
             if (backtrackPlan < world.planned) {
                 backtrackPlan = -1;
                 backtrack = 1;
                 elapseMult = 1;
             }
+            planned = world.planned;
+            time = world.time;
         }
+        // cout << "Planned: " << planned << ", Time: " << time << endl;
+        planfile << time << ", " << planned << endl;
         currAngles2 = plan2.node->angles;
         ballStart[ballIndex] = plan2.newBall;
         ballIndex++;
@@ -671,6 +750,12 @@ void executionThread() {
                 {
                     lock_guard<mutex> lock(queueLock);
                     if (planQueue1.empty()) {
+                        if (t0 >= 10) {
+                            planfile.close();
+                            exfile.close();
+                            cout << "No plans left\n";
+                            exit(0);
+                        }
                         wait1 = true;
                     } else {
                         node = planQueue1.front();
@@ -723,7 +808,8 @@ void executionThread() {
                     ballQueue[ballIndex1].pop_front();
                     updateBall1 = false;
                     nextBall1 = true;
-                    cout << "Executed: " << world.executedNext << endl;
+                    // cout << "Executed: " << world.executedNext << ", Time: " << world.time << endl;
+                    exfile << world.time << ", " << world.executedNext << endl;
                 }
             }
         } else {
@@ -734,6 +820,12 @@ void executionThread() {
                     lock_guard<mutex> lock(queueLock);
                     if (planQueue2.empty()) {
                         wait2 = true;
+                        if (t0 >= 10) {
+                            planfile.close();
+                            exfile.close();
+                            cout << "No plans left\n";
+                            exit(0);
+                        }
                     } else {
                         node = planQueue2.front();
                         planQueue2.pop_front();
@@ -785,7 +877,8 @@ void executionThread() {
                     ballQueue[ballIndex2].pop_front();
                     updateBall2 = false;
                     nextBall2 = true;
-                    cout << "Executed: " << world.executedNext << endl;
+                    // cout << "Executed: " << world.executedNext << ", Time: " << world.time << endl;
+                    exfile << world.time << ", " << world.executedNext << endl;
                 }
             }
         }
@@ -870,7 +963,7 @@ void visualizerThread() {
 
         RectangleShape baseRect1(Vector2f(VIS(BASEWIDTH), VIS(BASEHEIGHT)));
         baseRect1.setFillColor(Color::Blue);
-        baseRect1.setOrigin(VIS(BASEWIDTH/2.0f), VIS(BASEHEIGHT/2.0f));
+        baseRect1.setOrigin(VIS(BASEWIDTH*0.5f), VIS(BASEHEIGHT*0.5f));
         baseRect1.setPosition(base1);
 
         auto link11 = makeLink(base1, joint1, VIS(LINKWIDTH));
@@ -883,7 +976,7 @@ void visualizerThread() {
         RectangleShape effector1(Vector2f(VIS(EFFECTORWIDTH), 
             VIS(EFFECTORHEIGHT)));
         effector1.setFillColor(Color::Green);
-        effector1.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
+        effector1.setOrigin(VIS(EFFECTORWIDTH*0.5f), VIS(EFFECTORHEIGHT*0.5f));
         effector1.setPosition(end1);
 
         window.draw(effector1);
@@ -898,7 +991,7 @@ void visualizerThread() {
 
         RectangleShape baseRect2(Vector2f(VIS(BASEWIDTH), VIS(BASEHEIGHT)));
         baseRect2.setFillColor(Color::Blue);
-        baseRect2.setOrigin(VIS(BASEWIDTH/2.0f), VIS(BASEHEIGHT/2.0f));
+        baseRect2.setOrigin(VIS(BASEWIDTH*0.5f), VIS(BASEHEIGHT*0.5f));
         baseRect2.setPosition(base2);
 
         auto link12 = makeLink(base2, joint2, VIS(LINKWIDTH));
@@ -911,7 +1004,7 @@ void visualizerThread() {
         RectangleShape effector2(Vector2f(VIS(EFFECTORWIDTH), 
             VIS(EFFECTORHEIGHT)));
         effector2.setFillColor(Color::Green);
-        effector2.setOrigin(VIS(EFFECTORWIDTH/2.0f), VIS(EFFECTORHEIGHT/2.0f));
+        effector2.setOrigin(VIS(EFFECTORWIDTH*0.5f), VIS(EFFECTORHEIGHT*0.5f));
         effector2.setPosition(end2);
 
         window.draw(effector2);
@@ -966,6 +1059,18 @@ int main(int argc, char** argv) {
         cout << "Bad argument\n";
         return 0;
     }
+    if (planfile.is_open()) {
+        planfile << "Time, Plan\n";
+    } else {
+        cout << "Couldn't open file\n";
+        return 0;
+    }
+    if (exfile.is_open()) {
+        exfile << "Time, Catch\n";
+    } else {
+        cout << "Couldn't open file\n";
+        return 0;
+    }
     for (double t = 0; t <= TMAX; t += DT) {
         times.push_back(t);
     }
@@ -975,28 +1080,33 @@ int main(int argc, char** argv) {
     for (double a = -MAXACC2; a <= MAXACC2; a += DA) {
         accs2.push_back(a);
     }
+    shuffle(times.begin(), times.end(), gen);
+    shuffle(accs1.begin(), accs1.end(), gen);
+    shuffle(accs2.begin(), accs2.end(), gen);
     numBalls = stoi(argv[1]);
     ballQueue = new deque<BallState>[numBalls];
     cout << "Initializing...\n";
-    world.angleStart[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0,0,0};
-    world.angleEnd[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI/4, PI/2, 0, 0, FIRSTTHROW+5*(numBalls > 3)};
-    world.angleStart[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0,0,0};
-    world.angleEnd[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI/4, PI/2, 0, 0, FIRSTTHROW+5*(numBalls > 3)};
+    world.angleStart[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI*0.25, PI*0.5, 0,0,0};
+    world.angleEnd[0] = {BASEX1, BASEY1, TARGETX1, TARGETY1, PI*0.25, PI*0.5, 0, 0, FIRSTTHROW+5*(max(0, numBalls-2))};
+    world.angleStart[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI*0.25, PI*0.5, 0,0,0};
+    world.angleEnd[1] = {BASEX2, BASEY2, TARGETX2, TARGETY2, PI*0.25, PI*0.5, 0, 0, FIRSTTHROW+5*(max(0, numBalls-2))};
     EffectorState effector = anglesToEffector(world.angleStart[0]);
     world.ballStart = (BallState*)malloc(numBalls * sizeof(BallState));
     world.ballNext = (BallState*)malloc(numBalls * sizeof(BallState));
     for (int i = 0; i < numBalls; i++) {
-        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+5*(numBalls > 3)+i*8.0/numBalls};
+        world.ballStart[i] = {effector.x, effector.y, 0, 15, FIRSTTHROW+5*(max(0, numBalls-2))+i*8.0/numBalls};
         world.ballNext[i] = world.ballStart[i];
     }
     world.time = 0.0;
     thread execution(executionThread);
     thread planner(plannerThread);
-    cout << "Intial throw in " << FIRSTTHROW+5*(numBalls > 3) << " seconds\n";
+    cout << "Intial throw in " << FIRSTTHROW+5*(max(0, numBalls-2)) << " seconds\n";
     visualizerThread(); // run in main thread
+    planfile.close();
+    exfile.close();
 
     execution.join();
     planner.join();
 
-    return 0;
+    return 1;
 }
