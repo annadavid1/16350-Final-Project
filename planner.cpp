@@ -187,8 +187,8 @@ vector<double> ys;
 
 double startTime;
 
-std::ofstream planfile("plans5_13.csv");
-std::ofstream exfile("executed5_13.csv");
+std::ofstream planfile;
+std::ofstream exfile;
 
 
 // get position of ball at time t that started at start
@@ -1137,6 +1137,12 @@ void visualizerThread() {
 
 // run planner, execution, and visualizer simultaneously
 int main(int argc, char** argv) {
+    if (argc != 3) {
+        cout << "bad argument\n";
+        return 0;
+    }
+    planfile.open(argv[1]);
+    exfile.open(argv[2]);
     if (planfile.is_open()) {
         planfile << "Time, Plan\n";
     } else {
