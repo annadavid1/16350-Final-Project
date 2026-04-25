@@ -69,9 +69,9 @@ using namespace sf;
 #define SAMPLETIME 2.2
 #define FIRSTTHROW 10.0+5*(max(0, NUMBALLS-2))
 
-// how far ahead we can plan (up to 200 plans ahead)
-#define PLANAHEAD 200
-#define MAXELAPSE 1.0 + 0.5*max(0, NUMBALLS-4)
+// how far ahead we can plan
+#define PLANAHEAD 50 + NUMBALLS*50
+#define MAXELAPSE 1.0 + 0.5*(NUMBALLS > 4)
 #define ELAPSEMULT 1.25
 
 // extend outputs
@@ -187,8 +187,8 @@ vector<double> ys;
 
 double startTime;
 
-std::ofstream planfile("plans6_2.csv");
-std::ofstream exfile("executed6_2.csv");
+std::ofstream planfile("plans5_13.csv");
+std::ofstream exfile("executed5_13.csv");
 
 
 // get position of ball at time t that started at start
