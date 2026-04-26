@@ -67,7 +67,7 @@ using namespace sf;
 #define EPSILON PI/16.0
 
 #define SAMPLETIME 2.2
-#define FIRSTTHROW 10.0+5*(max(0, NUMBALLS-2))
+#define FIRSTTHROW 2.5*NUMBALLS + 5.0*max(0,NUMBALLS-4)
 
 // how far ahead we can plan
 #define PLANAHEAD 50 + NUMBALLS*50
@@ -177,8 +177,8 @@ deque<Node*> planQueue2;
 deque<BallState>* ballQueue;
 mutex queueLock;
 
-Color ballColors[6] = {Color::Yellow, Color::Magenta, Color::Cyan, Color::Red, 
-                       Color::Green, Color::Yellow};
+Color ballColors[5] = {Color::Yellow, Color::Magenta, Color::Cyan, Color::Red, 
+                       Color::Green};
 
 vector<double> times;
 vector<double> xs;
@@ -187,8 +187,7 @@ vector<double> ys;
 
 double startTime;
 
-std::ofstream planfile;
-std::ofstream exfile;
+std::ofstream resfile;
 
 
 // get position of ball at time t that started at start
@@ -633,7 +632,7 @@ static RRTOut runRRT(
 void plannerThread() {
     RRTOut plan1, plan2;
     WorldState snapshot;
-    int planned;
+    int planned, executed;
     double time;
     {
         lock_guard<mutex> lock(worldLock);
@@ -703,8 +702,9 @@ void plannerThread() {
                     world.planned -= backtrack * 2;
                     planned = world.planned;
                     time = world.time;
+                    executed = world.executedNext;
                 }
-                planfile << time << ", " << planned << endl;
+                resfile << time << ", " << planned << ", " << executed << endl;
                 backtrack++;
                 elapseMult *= ELAPSEMULT;
             }
@@ -724,8 +724,9 @@ void plannerThread() {
             }
             planned = world.planned;
             time = world.time;
+            executed = world.executedNext;
         }
-        planfile << time << ", " << planned << endl;
+        resfile << time << ", " << planned << ", " << executed << endl;
         currAngles1 = plan1.node->angles;
         ballStart[ballIndex] = plan1.newBall;
 
@@ -772,8 +773,9 @@ void plannerThread() {
                     world.planned -= backtrack * 2;
                     planned = world.planned;
                     time = world.time;
+                    executed = world.executedNext;
                 }
-                planfile << time << ", " << planned << endl;
+                resfile << time << ", " << planned << ", " << executed << endl;
                 backtrack++;
                 elapseMult *= ELAPSEMULT;
             }
@@ -794,8 +796,9 @@ void plannerThread() {
             }
             planned = world.planned;
             time = world.time;
+            executed = world.executedNext;
         }
-        planfile << time << ", " << planned << endl;
+        resfile << time << ", " << planned << ", " << executed << endl;
         currAngles2 = plan2.node->angles;
         ballStart[ballIndex] = plan2.newBall;
         ballIndex++;
@@ -835,8 +838,7 @@ void executionThread() {
                     lock_guard<mutex> lock(queueLock);
                     if (planQueue1.empty()) {
                         if (t0 >= FIRSTTHROW) {
-                            planfile.close();
-                            exfile.close();
+                            resfile.close();
                             cout << "No plans left\n";
                             exit(0);
                         }
@@ -892,7 +894,7 @@ void executionThread() {
                     ballQueue[ballIndex1].pop_front();
                     updateBall1 = false;
                     nextBall1 = true;
-                    exfile << world.time << ", " << world.executedNext << endl;
+                    resfile << world.time << ", " << world.planned << ", " << world.executedNext << endl;
                 }
             }
         } else {
@@ -904,8 +906,7 @@ void executionThread() {
                     if (planQueue2.empty()) {
                         wait2 = true;
                         if (t0 >= 10) {
-                            planfile.close();
-                            exfile.close();
+                            resfile.close();
                             cout << "No plans left\n";
                             exit(0);
                         }
@@ -960,7 +961,7 @@ void executionThread() {
                     ballQueue[ballIndex2].pop_front();
                     updateBall2 = false;
                     nextBall2 = true;
-                    exfile << world.time << ", " << world.executedNext << endl;
+                    resfile << world.time << ", " << world.planned << ", " << world.executedNext << endl;
                 }
             }
         }
@@ -1095,7 +1096,7 @@ void visualizerThread() {
         for (int i = 0; i < NUMBALLS; i++) {
             b = ball(snapshot.ballStart[i], snapshot.time);
             CircleShape circle(VIS(BALLRADIUS));
-            circle.setFillColor(ballColors[i]);
+            circle.setFillColor(ballColors[i%5]);
             circle.setOrigin(VIS(BALLRADIUS), VIS(BALLRADIUS));
             circle.setPosition(VISX(b.x), VISY(b.y));
             window.draw(circle);
@@ -1137,20 +1138,13 @@ void visualizerThread() {
 
 // run planner, execution, and visualizer simultaneously
 int main(int argc, char** argv) {
-    if (argc != 3) {
+    if (argc != 2) {
         cout << "bad argument\n";
         return 0;
     }
-    planfile.open(argv[1]);
-    exfile.open(argv[2]);
-    if (planfile.is_open()) {
-        planfile << "Time, Plan\n";
-    } else {
-        cout << "Couldn't open file\n";
-        return 0;
-    }
-    if (exfile.is_open()) {
-        exfile << "Time, Catch\n";
+    resfile.open(argv[1]);
+    if (resfile.is_open()) {
+        resfile << "Time, Plan, Executed\n";
     } else {
         cout << "Couldn't open file\n";
         return 0;
@@ -1187,8 +1181,7 @@ int main(int argc, char** argv) {
     thread planner(plannerThread);
     cout << "Intial throw in " << FIRSTTHROW << " seconds\n";
     visualizerThread(); // run in main thread
-    planfile.close();
-    exfile.close();
+    resfile.close();
 
     execution.join();
     planner.join();
